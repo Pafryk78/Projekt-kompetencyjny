@@ -21,6 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.kontroler.ui.theme.components.CustomSwitch
 import com.example.kontroler.ui.theme.components.ThrottleSlider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val httpClient = ControlHttpClient() // Tworzymy instancję klienta HTTP
@@ -97,6 +100,8 @@ fun ControlApp(httpClient: ControlHttpClient) {
 fun onStateChanged(newState: ControlState, lastState: ControlState, httpClient: ControlHttpClient) {
     val ipAddress = "http://192.168.4.1"
     // Wywołanie funkcji do porównania stanów i wysłania zmian
-    httpClient.sendData(newState, lastState, ipAddress)
+    CoroutineScope(Dispatchers.Main).launch {
+        httpClient.sendData(newState, lastState, ipAddress)
+    }
 }
 

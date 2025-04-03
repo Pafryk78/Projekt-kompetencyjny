@@ -1,7 +1,6 @@
 package com.example.kontroler
 
 import android.util.Log
-import kotlinx.coroutines.delay
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -11,12 +10,13 @@ import okhttp3.RequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
+import kotlinx.coroutines.*
 
 class ControlHttpClient {
     private val client = OkHttpClient()
 
     // Funkcja porównująca stany i wysyłająca dane tylko w przypadku zmian
-    fun sendData(newState: ControlState, lastState: ControlState, ipAddress: String) {
+    suspend fun sendData(newState: ControlState, lastState: ControlState, ipAddress: String) {
         val jsonData = JSONObject()
 
         // Porównaj tylko zmienione parametry
