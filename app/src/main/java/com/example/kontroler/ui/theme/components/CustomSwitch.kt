@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun CustomSwitch(
-    engineName: String,
+    actionName: String,
     isActive: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -31,7 +31,7 @@ fun CustomSwitch(
             .height(100.dp) // Ustawienie wysokości tła
     ) {
         Text(
-            text = engineName,
+            text = actionName,
             color = Color.Green,
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
