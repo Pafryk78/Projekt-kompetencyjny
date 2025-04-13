@@ -7,13 +7,19 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Switch
@@ -27,7 +33,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +49,7 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import com.example.kontroler.ui.theme.components.CustomSwitch
+import com.example.kontroler.ui.theme.components.ThrottleSlider
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,13 +69,15 @@ class MainActivity : ComponentActivity() {
 fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
     var streaming by remember { mutableStateOf(false) }
     var eng1State by remember { mutableStateOf(false) }
+    var eng2State by remember { mutableStateOf(false) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var servoValue by remember { mutableStateOf(90f) }
+    var thrustValue by remember { mutableStateOf(90f) }
+
     val scope = rememberCoroutineScope()
 
-    // Używamy launch, by strumień działał równocześnie z wysyłaniem komend
     LaunchedEffect(streaming) {
         if (streaming) {
-            // Uruchamiamy odbieranie strumienia w osobnym wątku
             scope.launch {
                 sendCommandToEsp32(ip, commandPort, "STREAM_START")
                 streamFramesFromEsp32(ip, streamPort, onFrame = {
@@ -77,42 +89,110 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
         }
     }
 
-    // Wysłanie komend sterujących ENG1
     LaunchedEffect(eng1State) {
-        val command = if (eng1State) "ENG1_ON" else "ENG1_OFF"
-        sendCommandToEsp32(ip, commandPort, command)
+        sendCommandToEsp32(ip, commandPort, if (eng1State) "ENG1_ON" else "ENG1_OFF")
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        CustomSwitch(
-            actionName = "Podgląd na żywo",
-            isActive = streaming,
-            onClick = { streaming = !streaming }
-        )
+    LaunchedEffect(eng2State) {
+        sendCommandToEsp32(ip, commandPort, if (eng2State) "ENG2_ON" else "ENG2_OFF")
+    }
 
-        Spacer(Modifier.height(16.dp))
+    LaunchedEffect(servoValue) {
+        sendCommandToEsp32(ip, commandPort, "SERVO_${servoValue.toInt()}")
+    }
 
-        CustomSwitch(
-            actionName = "ENG1",
-            isActive = eng1State,
-            onClick = { eng1State = !eng1State }
-        )
+    LaunchedEffect(thrustValue) {
+        sendCommandToEsp32(ip, commandPort, "THRUST_${thrustValue.toInt()}")
+    }
 
-        Spacer(Modifier.height(16.dp))
+    Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            // Lewy slider
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(4.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("Serwo", fontWeight = FontWeight.Bold)
+                ThrottleSlider(
+                    modifier = Modifier.width(30.dp),
+                    onValueChange = { servoValue = it }
+                )
+            }
 
-        when {
-            streaming && bitmap == null -> CircularProgressIndicator()
-            bitmap != null -> Image(
-                bitmap = bitmap!!.asImageBitmap(),
-                contentDescription = "Podgląd ESP32",
-                modifier = Modifier.fillMaxWidth()
-            )
+            // Środek: kamera i przyciski
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Obraz z kamery z zaokrągleniem
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap!!.asImageBitmap(),
+                            contentDescription = "Podgląd ESP32",
+                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp))
+                        )
+                    } else if (streaming) {
+                        CircularProgressIndicator(color = Color.White)
+                    }
+                }
+
+                // Przyciski sklejone razem
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    CustomSwitch(
+                        actionName = "ENG1",
+                        isActive = eng1State,
+                        onClick = { eng1State = !eng1State }
+                    )
+                    CustomSwitch(
+                        actionName = "ENG2",
+                        isActive = eng2State,
+                        onClick = { eng2State = !eng2State }
+                    )
+                    CustomSwitch(
+                        actionName = "Kamerka",
+                        isActive = streaming,
+                        onClick = { streaming = !streaming }
+                    )
+                }
+            }
+
+            // Prawy slider
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(4.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("Ciąg", fontWeight = FontWeight.Bold)
+                ThrottleSlider(
+                    modifier = Modifier.width(30.dp),
+                    onValueChange = { thrustValue = it }
+                )
+            }
         }
     }
 }
+
+
 
 // Wysyłanie komendy do ESP32 z logami
 suspend fun sendCommandToEsp32(ip: String, port: Int, command: String) = withContext(Dispatchers.IO) {
