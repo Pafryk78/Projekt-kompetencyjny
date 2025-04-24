@@ -1,8 +1,5 @@
 package com.example.kontroler.ui.theme.components
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -10,24 +7,36 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 @Composable
 fun ThrottleSlider(
     modifier: Modifier = Modifier,
-    minValue: Float = 0f,
-    maxValue: Float = 180f,
-    onValueChange:  (Float) -> Unit
+    minValue: Int = 0,
+    maxValue: Int = 180,
+    initialValue: Int = 90,
+    onValueChange: (Int) -> Unit
 ) {
-    var position by remember { mutableStateOf(90f) }
-    val animatedPosition by animateFloatAsState(targetValue = position, label = "ThrottleAnimation")
+    var position by remember { mutableStateOf(initialValue.coerceIn(minValue, maxValue)) }
+    val animatedPosition by animateFloatAsState(
+        targetValue = position.toFloat(),
+        label = "ThrottleAnimation"
+    )
 
     Box(
         modifier = modifier
@@ -37,14 +46,16 @@ fun ThrottleSlider(
             .draggable(
                 orientation = Orientation.Vertical,
                 state = rememberDraggableState { delta ->
-                    position = (position - delta / 5f).coerceIn(minValue, maxValue)
-                    onValueChange(position)
+                    val newPosition = (position - (delta / 5f).roundToInt())
+                        .coerceIn(minValue, maxValue)
+                    if (newPosition != position) {
+                        position = newPosition
+                        onValueChange(newPosition)
+                    }
                 }
             )
     ) {
-        Canvas(
-            modifier = Modifier.fillMaxSize()
-        ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
             val trackWidth = size.width / 4
             val trackHeight = size.height
             val knobHeight = size.height / 6

@@ -12,17 +12,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -38,18 +35,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.CoroutineScope
+import com.example.kontroler.ui.theme.components.CustomSwitch
+import com.example.kontroler.ui.theme.components.ThrottleSlider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ObsoleteCoroutinesApi
+import kotlinx.coroutines.channels.ticker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.EOFException
 import java.io.InputStream
+import java.io.PrintWriter
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import com.example.kontroler.ui.theme.components.CustomSwitch
-import com.example.kontroler.ui.theme.components.ThrottleSlider
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,14 +66,16 @@ class MainActivity : ComponentActivity() {
 }
 
 // Główna funkcja UI
+@OptIn(ObsoleteCoroutinesApi::class)
 @Composable
 fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
     var streaming by remember { mutableStateOf(false) }
     var eng1State by remember { mutableStateOf(false) }
     var eng2State by remember { mutableStateOf(false) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var servoValue by remember { mutableStateOf(90f) }
-    var thrustValue by remember { mutableStateOf(90f) }
+    var servoValue by remember { mutableStateOf(0) }
+    var thrustValue by remember { mutableStateOf(90) }
+
 
     val scope = rememberCoroutineScope()
 
@@ -97,13 +100,60 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
         sendCommandToEsp32(ip, commandPort, if (eng2State) "ENG2_ON" else "ENG2_OFF")
     }
 
-    LaunchedEffect(servoValue) {
-        sendCommandToEsp32(ip, commandPort, "SERVO_${servoValue.toInt()}")
+    LaunchedEffect(Unit) {
+        // serwo
+        launch {
+            val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
+            var lastServo = servoValue
+            var currentServo = servoValue
+
+            for (event in ticker) {
+                // Sprawdzamy, czy serwo jest w trakcie interpolacji
+                if (currentServo != servoValue) {
+                    currentServo += when {
+                        currentServo < servoValue -> 1
+                        currentServo > servoValue -> -1
+                        else -> 0
+                    }
+                    // Wysyłamy komendę tylko jeśli zmieniła się wartość serwa
+                    if (currentServo != lastServo) {
+                        sendCommandToEsp32(ip, commandPort, "SERVO_SET:$currentServo")
+                        lastServo = currentServo
+                    }
+                }
+            }
+        }
+
+        // ciąg (ENG2)
+        launch {
+            val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
+            var lastThrust = thrustValue
+            var currentThrust = thrustValue
+
+            for (event in ticker) {
+                if (eng2State) {
+                    // ENG2 włączony: wysyłamy tylko wtedy, gdy ciąg zmienia się w stosunku do wartości zadanej
+                    if (currentThrust != thrustValue) {
+                        currentThrust += when {
+                            currentThrust < thrustValue -> 1
+                            currentThrust > thrustValue -> -1
+                            else -> 0
+                        }
+                        if (currentThrust != lastThrust) {
+                            sendCommandToEsp32(ip, commandPort, "ENG2_SET:$currentThrust")
+                            lastThrust = currentThrust
+                        }
+                    }
+                }
+                // Gdy ENG2 jest wyłączony, nie robimy nic - nie wysyłamy danych.
+            }
+        }
+
+
+
     }
 
-    LaunchedEffect(thrustValue) {
-        sendCommandToEsp32(ip, commandPort, "THRUST_${thrustValue.toInt()}")
-    }
+
 
     Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
         Row(modifier = Modifier.fillMaxSize()) {
@@ -116,7 +166,10 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
             ) {
                 Text("Serwo", fontWeight = FontWeight.Bold)
                 ThrottleSlider(
-                    modifier = Modifier.width(30.dp),
+                    minValue = 0,
+                    maxValue = 180,
+                    initialValue = 90,
+                    modifier = Modifier.width(100.dp),
                     onValueChange = { servoValue = it }
                 )
             }
@@ -148,7 +201,9 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
                     } else if (streaming) {
                         CircularProgressIndicator(color = Color.White)
                     }
+
                 }
+
 
                 // Przyciski sklejone razem
                 Row(
@@ -184,7 +239,10 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
             ) {
                 Text("Ciąg", fontWeight = FontWeight.Bold)
                 ThrottleSlider(
-                    modifier = Modifier.width(30.dp),
+                    minValue = 0,
+                    maxValue = 100,
+                    initialValue = 0,
+                    modifier = Modifier.width(100.dp),
                     onValueChange = { thrustValue = it }
                 )
             }
@@ -208,6 +266,8 @@ suspend fun sendCommandToEsp32(ip: String, port: Int, command: String) = withCon
         Log.e("ESP32_Command", "Błąd przy wysyłaniu komendy: $command", e) // Log błędu
     }
 }
+
+
 
 // Funkcja do odbioru strumienia
 suspend fun streamFramesFromEsp32(
@@ -265,3 +325,4 @@ fun InputStream.readFully(buffer: ByteArray) {
         bytesRead += result
     }
 }
+
