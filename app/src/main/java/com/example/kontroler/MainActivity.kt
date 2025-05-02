@@ -44,10 +44,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.BufferedReader
 import java.io.EOFException
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.io.PrintWriter
-import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -75,7 +76,7 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var servoValue by remember { mutableStateOf(0) }
     var thrustValue by remember { mutableStateOf(90) }
-
+    var isConnected by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
 
@@ -100,7 +101,23 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
         sendCommandToEsp32(ip, commandPort, if (eng2State) "ENG2_ON" else "ENG2_OFF")
     }
 
+    LaunchedEffect(isConnected) {
+        if (isConnected) {
+            // Synchronizujemy stan przy pierwszym połączeniu
+            val state = synchronizeState(ip, commandPort)
+            state?.let {
+                eng1State = it["ENG1"] == "ON"
+                eng2State = it["ENG2"] == "ON"
+                thrustValue = it["ENG2_VAL"]?.toIntOrNull() ?: 0
+                servoValue = it["SERVO"]?.toIntOrNull() ?: 90
+                streaming = it["STREAM"] == "ON"
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
+
+
         // serwo
         launch {
             val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
@@ -148,11 +165,34 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
                 // Gdy ENG2 jest wyłączony, nie robimy nic - nie wysyłamy danych.
             }
         }
+        // Ping-Pong
+        launch {
+            val ticker = ticker(delayMillis = 5000, initialDelayMillis = 0)
 
+            for (event in ticker) {
+                try {
+                    if (isConnected) {
+                        // Wysłanie PING i oczekiwanie na odpowiedź PONG przez 500 ms
+                        val response = withTimeoutOrNull(500L) {
+                            sendCommandToEsp32(ip, commandPort, "PING")
+                        }
 
+                        val pongReceived = response?.trim() == "PONG"
 
+                        if (!pongReceived) {
+                            Log.e("PingPong", "Brak odpowiedzi PONG w ciągu 500 ms")
+                        }
+
+                        // Zaktualizowanie statusu po otrzymaniu odpowiedzi
+                        isConnected = pongReceived
+                    }
+                } catch (e: Exception) {
+                    Log.e("PingPong", "Błąd przy pingowaniu: ${e.message}")
+                    isConnected = false
+                }
+            }
+        }
     }
-
 
 
     Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
@@ -201,7 +241,13 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
                     } else if (streaming) {
                         CircularProgressIndicator(color = Color.White)
                     }
-
+                    //Wskaźnik połączenia
+                    Box(
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .size(16.dp)
+                            .background(if (isConnected) Color.Green else Color.Red, shape = RoundedCornerShape(50))
+                    )
                 }
 
 
@@ -253,17 +299,30 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
 
 
 // Wysyłanie komendy do ESP32 z logami
-suspend fun sendCommandToEsp32(ip: String, port: Int, command: String) = withContext(Dispatchers.IO) {
+suspend fun sendCommandToEsp32(ip: String, port: Int, command: String): String? = withContext(Dispatchers.IO) {
     try {
-        Log.d("ESP32_Command", "Wysyłam komendę: $command na IP: $ip, port: $port") // Log przed wysyłką komendy
+        Log.d("ESP32_Command", "Wysyłam komendę: $command na IP: $ip, port: $port")
+
         Socket(ip, port).use { socket ->
             val output = socket.getOutputStream()
             output.write("$command\n".toByteArray())
             output.flush()
+
+            // Tylko jeśli komenda to "PING", odbieramy odpowiedź
+            if (command.uppercase() == "PING") {
+                val input = socket.getInputStream()
+                val reader = BufferedReader(InputStreamReader(input))
+                val response = reader.readLine()
+                Log.d("ESP32_Command", "Odpowiedź z ESP32: $response")
+                return@withContext response
+            }
         }
-        Log.d("ESP32_Command", "Komenda wysłana pomyślnie: $command") // Log po wysyłce komendy
+
+        Log.d("ESP32_Command", "Komenda wysłana pomyślnie: $command")
+        return@withContext null
     } catch (e: Exception) {
-        Log.e("ESP32_Command", "Błąd przy wysyłaniu komendy: $command", e) // Log błędu
+        Log.e("ESP32_Command", "Błąd przy komunikacji: $command", e)
+        return@withContext null
     }
 }
 
@@ -323,6 +382,37 @@ fun InputStream.readFully(buffer: ByteArray) {
         val result = this.read(buffer, bytesRead, buffer.size - bytesRead)
         if (result == -1) throw EOFException("Stream ended before reading all bytes")
         bytesRead += result
+    }
+}
+
+suspend fun synchronizeState(ip: String, port: Int): Map<String, String>? = withContext(Dispatchers.IO) {
+    try {
+        Socket(ip, port).use { socket ->
+            val output = PrintWriter(socket.getOutputStream(), true)
+            val input = BufferedReader(InputStreamReader(socket.getInputStream()))
+
+            output.println("SYNCH")
+
+            val result = mutableMapOf<String, String>()
+            var line: String?
+            var started = false
+
+            while (input.readLine().also { line = it } != null) {
+                if (line == "STATE_BEGIN") {
+                    started = true
+                } else if (line == "STATE_END") {
+                    break
+                } else if (started && line!!.contains(":")) {
+                    val parts = line!!.split(":", limit = 2)
+                    result[parts[0]] = parts[1]
+                }
+            }
+
+            return@withContext result
+        }
+    } catch (e: Exception) {
+        Log.e("SYNCH", "Błąd przy synchronizacji: ${e.message}")
+        return@withContext null
     }
 }
 
