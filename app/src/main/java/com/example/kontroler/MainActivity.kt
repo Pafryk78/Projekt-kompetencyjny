@@ -1,7 +1,10 @@
 package com.example.kontroler
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -33,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.kontroler.ui.theme.components.CustomSwitch
@@ -49,6 +53,7 @@ import java.io.EOFException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.PrintWriter
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -77,28 +82,35 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
     var servoValue by remember { mutableStateOf(0) }
     var thrustValue by remember { mutableStateOf(90) }
     var isConnected by remember { mutableStateOf(false) }
+    var GoodConnection by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
+
+
+
+
+
+
 
     LaunchedEffect(streaming) {
         if (streaming) {
             scope.launch {
-                sendCommandToEsp32(ip, commandPort, "STREAM_START")
+                sendCommandToEsp32(ip, commandPort, "STREAM_START",isConnected)
                 streamFramesFromEsp32(ip, streamPort, onFrame = {
                     bitmap = it
                 }, stopSignal = { !streaming })
             }
         } else {
-            sendCommandToEsp32(ip, commandPort, "STREAM_STOP")
+            sendCommandToEsp32(ip, commandPort, "STREAM_STOP",isConnected)
         }
     }
 
     LaunchedEffect(eng1State) {
-        sendCommandToEsp32(ip, commandPort, if (eng1State) "ENG1_ON" else "ENG1_OFF")
+        sendCommandToEsp32(ip, commandPort, if (eng1State) "ENG1_ON" else "ENG1_OFF", isConnected)
     }
 
     LaunchedEffect(eng2State) {
-        sendCommandToEsp32(ip, commandPort, if (eng2State) "ENG2_ON" else "ENG2_OFF")
+        sendCommandToEsp32(ip, commandPort, if (eng2State) "ENG2_ON" else "ENG2_OFF", isConnected)
     }
 
     LaunchedEffect(isConnected) {
@@ -134,7 +146,7 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
                     }
                     // Wysyłamy komendę tylko jeśli zmieniła się wartość serwa
                     if (currentServo != lastServo) {
-                        sendCommandToEsp32(ip, commandPort, "SERVO_SET:$currentServo")
+                        sendCommandToEsp32(ip, commandPort, "SERVO_SET:$currentServo", isConnected)
                         lastServo = currentServo
                     }
                 }
@@ -157,7 +169,7 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
                             else -> 0
                         }
                         if (currentThrust != lastThrust) {
-                            sendCommandToEsp32(ip, commandPort, "ENG2_SET:$currentThrust")
+                            sendCommandToEsp32(ip, commandPort, "ENG2_SET:$currentThrust", isConnected)
                             lastThrust = currentThrust
                         }
                     }
@@ -171,135 +183,130 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int) {
 
             for (event in ticker) {
                 try {
-                    if (isConnected) {
-                        // Wysłanie PING i oczekiwanie na odpowiedź PONG przez 500 ms
-                        val response = withTimeoutOrNull(500L) {
-                            sendCommandToEsp32(ip, commandPort, "PING")
-                        }
-
-                        val pongReceived = response?.trim() == "PONG"
-
-                        if (!pongReceived) {
-                            Log.e("PingPong", "Brak odpowiedzi PONG w ciągu 500 ms")
-                        }
-
-                        // Zaktualizowanie statusu po otrzymaniu odpowiedzi
-                        isConnected = pongReceived
+                    // Wysłanie PING i oczekiwanie na odpowiedź PONG przez 500 ms
+                    val response = withTimeoutOrNull(5000L) {
+                        sendCommandToEsp32(ip, commandPort, "PING", isConnected)
                     }
+
+                    val pongReceived = response?.trim() == "PONG"
+
+                    if (!pongReceived) {
+                        Log.e("PingPong", "Brak odpowiedzi PONG w ciągu 500 ms")
+                    }
+
+                    // Zaktualizowanie statusu po otrzymaniu odpowiedzi
+                    GoodConnection = pongReceived
+
                 } catch (e: Exception) {
                     Log.e("PingPong", "Błąd przy pingowaniu: ${e.message}")
-                    isConnected = false
+                    GoodConnection = false
                 }
             }
         }
     }
 
 
-    Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            // Lewy slider
-            Column(
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Tło: obraz z kamery
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "Podgląd ESP32",
                 modifier = Modifier
-                    .fillMaxHeight()
-                    .padding(4.dp),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text("Serwo", fontWeight = FontWeight.Bold)
-                ThrottleSlider(
-                    minValue = 0,
-                    maxValue = 180,
-                    initialValue = 90,
-                    modifier = Modifier.width(100.dp),
-                    onValueChange = { servoValue = it }
-                )
-            }
-
-            // Środek: kamera i przyciski
-            Column(
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(0.dp)) // pełny ekran, bez zaokrągleń
+            )
+        } else if (streaming) {
+            Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+                    .fillMaxSize()
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
             ) {
-                // Obraz z kamery z zaokrągleniem
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.Black),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (bitmap != null) {
-                        Image(
-                            bitmap = bitmap!!.asImageBitmap(),
-                            contentDescription = "Podgląd ESP32",
-                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp))
-                        )
-                    } else if (streaming) {
-                        CircularProgressIndicator(color = Color.White)
-                    }
-                    //Wskaźnik połączenia
-                    Box(
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .size(16.dp)
-                            .background(if (isConnected) Color.Green else Color.Red, shape = RoundedCornerShape(50))
-                    )
-                }
-
-
-                // Przyciski sklejone razem
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    CustomSwitch(
-                        actionName = "ENG1",
-                        isActive = eng1State,
-                        onClick = { eng1State = !eng1State }
-                    )
-                    CustomSwitch(
-                        actionName = "ENG2",
-                        isActive = eng2State,
-                        onClick = { eng2State = !eng2State }
-                    )
-                    CustomSwitch(
-                        actionName = "Kamerka",
-                        isActive = streaming,
-                        onClick = { streaming = !streaming }
-                    )
-                }
-            }
-
-            // Prawy slider
-            Column(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .padding(4.dp),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text("Ciąg", fontWeight = FontWeight.Bold)
-                ThrottleSlider(
-                    minValue = 0,
-                    maxValue = 100,
-                    initialValue = 0,
-                    modifier = Modifier.width(100.dp),
-                    onValueChange = { thrustValue = it }
-                )
+                CircularProgressIndicator(color = Color.White)
             }
         }
+
+        // Overlay: wskaźnik połączenia (góra lewa)
+        Box(
+            modifier = Modifier
+                .padding(12.dp)
+                .size(16.dp)
+                .align(Alignment.TopStart)
+                .background(if (GoodConnection) Color.Green else Color.Red, shape = RoundedCornerShape(50))
+        )
+
+        // Overlay: przyciski sterujące (dół, środek)
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            CustomSwitch(
+                actionName = "ENG1",
+                isActive = eng1State,
+                onClick = { eng1State = !eng1State }
+            )
+            CustomSwitch(
+                actionName = "ENG2",
+                isActive = eng2State,
+                onClick = { eng2State = !eng2State }
+            )
+            CustomSwitch(
+                actionName = "Kamera",
+                isActive = streaming,
+                onClick = { streaming = !streaming }
+            )
+        }
+
+        // Overlay: suwak serwa (lewy środek)
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("Serwo", fontWeight = FontWeight.Bold, color = Color.White)
+            ThrottleSlider(
+                minValue = 0,
+                maxValue = 180,
+                initialValue = 90,
+                modifier = Modifier.width(100.dp),
+                onValueChange = { servoValue = it }
+            )
+        }
+
+        // Overlay: suwak ciągu (prawy środek)
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("Ciąg", fontWeight = FontWeight.Bold, color = Color.White)
+            ThrottleSlider(
+                minValue = 0,
+                maxValue = 100,
+                initialValue = 0,
+                modifier = Modifier.width(100.dp),
+                onValueChange = { thrustValue = it }
+            )
+        }
     }
+
 }
 
 
 
 // Wysyłanie komendy do ESP32 z logami
-suspend fun sendCommandToEsp32(ip: String, port: Int, command: String): String? = withContext(Dispatchers.IO) {
+suspend fun sendCommandToEsp32(ip: String, port: Int, command: String, isConnected: Boolean): String? = withContext(Dispatchers.IO) {
+    if (!isConnected) {
+        Log.w("ESP32_Command", "Brak połączenia z ESP32. Komenda nie została wysłana.")
+        return@withContext null // Jeśli nie jesteśmy połączeni, nie wysyłamy komendy
+    }
+
+
     try {
         Log.d("ESP32_Command", "Wysyłam komendę: $command na IP: $ip, port: $port")
 
