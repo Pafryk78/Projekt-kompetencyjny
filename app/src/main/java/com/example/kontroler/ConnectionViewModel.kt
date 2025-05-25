@@ -26,23 +26,37 @@ import java.nio.ByteOrder
 
 class ConnectionViewModel : ViewModel() {
 
+    // --- Globalny stan aplikacji ---
+    var streaming = mutableStateOf(false)
+    var eng1State = mutableStateOf(false)
+    var eng2State = mutableStateOf(false)
+    var bitmap = mutableStateOf<Bitmap?>(null)
+    var servoValue = mutableStateOf(0)
+    var thrustValue = mutableStateOf(90)
+    var isConnected = mutableStateOf(false)
 
-    var GoodConnection by mutableStateOf(false)
-        private set
+
+
 
     private var pingPongJob: Job? = null
 
     fun startPingPong(ip: String, commandPort: Int) {
-        // Jeśli już działa, nic nie rób
+        // Nie uruchamiaj, jeśli już działa
         if (pingPongJob?.isActive == true) return
 
+        // Nie uruchamiaj, jeśli połączenie nieaktywne
+        if (!isConnected.value) {
+            Log.w("PingPong", "Nie rozpoczęto pingowania – brak połączenia")
+            return
+        }
+
         pingPongJob = viewModelScope.launch {
-            val ticker = ticker(delayMillis = 5000, initialDelayMillis = 0)
+            val ticker = ticker(delayMillis = 4500, initialDelayMillis = 0)
             for (event in ticker) {
                 try {
-                    // Wysłanie PING i oczekiwanie na odpowiedź PONG przez 5000 ms
+
                     val response = withTimeoutOrNull(5000L) {
-                        sendCommandToEsp32(ip, commandPort, "PING", GoodConnection)
+                        sendCommandToEsp32(ip, commandPort, "PING", true)
                     }
 
                     val pongReceived = response?.trim() == "PONG"
@@ -51,21 +65,19 @@ class ConnectionViewModel : ViewModel() {
                         Log.e("PingPong", "Brak odpowiedzi PONG w ciągu 5000 ms")
                     }
 
-                    // Aktualizujemy status połączenia
-                    GoodConnection = pongReceived
+                    isConnected.value = pongReceived
 
                 } catch (e: Exception) {
                     Log.e("PingPong", "Błąd przy pingowaniu: ${e.message}")
-                    GoodConnection = false
+                    isConnected.value = false
                 }
             }
+
+            Log.i("PingPong", "PingPongJob zakończony")
         }
     }
 
-    fun stopPingPong() {
-        pingPongJob?.cancel()
-        GoodConnection = false
-    }
+
 
     // Wysyłanie komendy do ESP32 z logami
     suspend fun sendCommandToEsp32(ip: String, port: Int, command: String, isConnected: Boolean): String? = withContext(

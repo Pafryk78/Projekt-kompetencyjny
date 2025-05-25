@@ -1,8 +1,10 @@
 package com.example.kontroler.ui.theme
 
+import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,14 +19,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,45 +82,48 @@ fun MainApp() {
         }
 
         composable("settings") {
-            SettingsScreen(navController = navController)
+            SettingsScreen(
+                ip = "192.168.4.1",
+                commandPort = 80,
+                navController = navController)
         }
     }
 }
 
+@SuppressLint("UnrememberedGetBackStackEntry")
 @OptIn(ObsoleteCoroutinesApi::class)
 @Composable
 fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navController: NavController) {
-    var streaming by remember { mutableStateOf(false) }
-    var eng1State by remember { mutableStateOf(false) }
-    var eng2State by remember { mutableStateOf(false) }
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var servoValue by remember { mutableStateOf(0) }
-    var thrustValue by remember { mutableStateOf(90) }
-    var isConnected by remember { mutableStateOf(false) }
-    var GoodConnection by remember { mutableStateOf(false) }
+
+    val viewModel: ConnectionViewModel = viewModel(LocalContext.current as ComponentActivity)
+
 
     val scope = rememberCoroutineScope()
 
-
-    val connectionViewModel: ConnectionViewModel = viewModel()
-
+    var streaming = viewModel.streaming.value
+    var eng1State = viewModel.eng1State.value
+    var eng2State = viewModel.eng2State.value
+    var bitmap = viewModel.bitmap.value
+    var servoValue = viewModel.servoValue.value
+    var thrustValue = viewModel.thrustValue.value
+    var isConnected = viewModel.isConnected.value
 
 
 
     LaunchedEffect(streaming) {
         if (streaming) {
-                connectionViewModel.sendCommandToEsp32(ip, commandPort, "STREAM_START",isConnected)
-                connectionViewModel.streamFramesFromEsp32(ip, streamPort, onFrame = {
-                    bitmap = it
+            viewModel.sendCommandToEsp32(ip, commandPort, "STREAM_START",isConnected)
+            viewModel.streamFramesFromEsp32(ip, streamPort, onFrame = {
+                    viewModel.bitmap.value = it
                 }, stopSignal = { !streaming })
         } else {
-            connectionViewModel.sendCommandToEsp32(ip, commandPort, "STREAM_STOP",isConnected)
+            viewModel.sendCommandToEsp32(ip, commandPort, "STREAM_STOP",isConnected)
         }
     }
 
     LaunchedEffect(eng1State) {
-        
-            connectionViewModel.sendCommandToEsp32(
+
+        viewModel.sendCommandToEsp32(
                 ip,
                 commandPort,
                 if (eng1State) "ENG1_ON" else "ENG1_OFF",
@@ -124,7 +132,7 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
     }
 
     LaunchedEffect(eng2State) {
-            connectionViewModel.sendCommandToEsp32(
+        viewModel.sendCommandToEsp32(
                 ip,
                 commandPort,
                 if (eng2State) "ENG2_ON" else "ENG2_OFF",
@@ -132,73 +140,64 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
             )
     }
 
-    LaunchedEffect(isConnected) {
-        if (isConnected) {
-            // Synchronizujemy stan przy pierwszym połączeniu
-            val state = connectionViewModel.synchronizeState(ip, commandPort)
-            state?.let {
-                eng1State = it["ENG1"] == "ON"
-                eng2State = it["ENG2"] == "ON"
-                thrustValue = it["ENG2_VAL"]?.toIntOrNull() ?: 0
-                servoValue = it["SERVO"]?.toIntOrNull() ?: 90
-                streaming = it["STREAM"] == "ON"
-            }
-        }
-    }
+
 
     LaunchedEffect(Unit) {
 
-        connectionViewModel.startPingPong(ip, commandPort)
+        viewModel.startPingPong(ip, commandPort)
 
 
         // serwo
         launch {
             val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
-            var lastServo = servoValue
-            var currentServo = servoValue
+            var lastServo = viewModel.servoValue.value
+            var currentServo = viewModel.servoValue.value
 
             for (event in ticker) {
-                // Sprawdzamy, czy serwo jest w trakcie interpolacji
-                if (currentServo != servoValue) {
+                val targetServo = viewModel.servoValue.value
+
+                if (currentServo != targetServo) {
                     currentServo += when {
-                        currentServo < servoValue -> 1
-                        currentServo > servoValue -> -1
+                        currentServo < targetServo -> 1
+                        currentServo > targetServo -> -1
                         else -> 0
                     }
-                    // Wysyłamy komendę tylko jeśli zmieniła się wartość serwa
+
                     if (currentServo != lastServo) {
-                        connectionViewModel.sendCommandToEsp32(ip, commandPort, "SERVO_SET:$currentServo", isConnected)
+                        viewModel.sendCommandToEsp32(ip, commandPort, "SERVO_SET:$currentServo", isConnected)
                         lastServo = currentServo
                     }
                 }
             }
         }
 
-        // ciąg (ENG2)
         launch {
             val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
-            var lastThrust = thrustValue
-            var currentThrust = thrustValue
+            var lastThrust = viewModel.thrustValue.value
+            var currentThrust = viewModel.thrustValue.value
 
             for (event in ticker) {
-                if (eng2State) {
-                    // ENG2 włączony: wysyłamy tylko wtedy, gdy ciąg zmienia się w stosunku do wartości zadanej
-                    if (currentThrust != thrustValue) {
+                val targetThrust = viewModel.thrustValue.value
+                val eng2 = viewModel.eng2State.value
+
+                if (eng2) {
+                    if (currentThrust != targetThrust) {
                         currentThrust += when {
-                            currentThrust < thrustValue -> 1
-                            currentThrust > thrustValue -> -1
+                            currentThrust < targetThrust -> 1
+                            currentThrust > targetThrust -> -1
                             else -> 0
                         }
+
                         if (currentThrust != lastThrust) {
-                            connectionViewModel.sendCommandToEsp32(ip, commandPort, "ENG2_SET:$currentThrust", isConnected)
+                            viewModel.sendCommandToEsp32(ip, commandPort, "ENG2_SET:$currentThrust", isConnected)
                             lastThrust = currentThrust
                         }
                     }
                 }
-                // Gdy ENG2 jest wyłączony, nie robimy nic - nie wysyłamy danych.
+                // Jeśli ENG2 jest wyłączony – nic nie robimy
             }
         }
-        // Ping-Pong
+
 
     }
 
@@ -230,7 +229,7 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
                 .padding(12.dp)
                 .size(16.dp)
                 .align(Alignment.TopStart)
-                .background(if (GoodConnection) Color.Green else Color.Red, shape = RoundedCornerShape(50))
+                .background(if (isConnected) Color.Green else Color.Red, shape = RoundedCornerShape(50))
         )
 
         // ** NOWY PRZYCISK USTAWIEŃ (góra prawa) **
@@ -261,17 +260,17 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
             CustomSwitch(
                 actionName = "ENG1",
                 isActive = eng1State,
-                onClick = { eng1State = !eng1State }
+                onClick = { viewModel.eng1State.value = !eng1State }
             )
             CustomSwitch(
                 actionName = "ENG2",
                 isActive = eng2State,
-                onClick = { eng2State = !eng2State }
+                onClick = { viewModel.eng2State.value = !eng2State }
             )
             CustomSwitch(
                 actionName = "Kamera",
                 isActive = streaming,
-                onClick = { streaming = !streaming }
+                onClick = { viewModel.streaming.value = !streaming }
             )
         }
 
@@ -288,7 +287,7 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
                 maxValue = 180,
                 initialValue = 90,
                 modifier = Modifier.width(100.dp),
-                onValueChange = { servoValue = it }
+                onValueChange = { viewModel.servoValue.value = it }
             )
         }
 
@@ -305,35 +304,99 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
                 maxValue = 100,
                 initialValue = 0,
                 modifier = Modifier.width(100.dp),
-                onValueChange = { thrustValue = it }
+                onValueChange = { viewModel.thrustValue.value = it }
             )
         }
     }
 
 }
 
+@SuppressLint("UnrememberedGetBackStackEntry")
 @Composable
 fun SettingsScreen(
+    ip: String,
+    commandPort: Int,
     navController: NavController
 ) {
+    val viewModel: ConnectionViewModel = viewModel(LocalContext.current as ComponentActivity)
+
+    var startSync by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(text = "Ustawienia ESP32")
+    var streaming = viewModel.streaming.value
+    var eng1State = viewModel.eng1State.value
+    var eng2State = viewModel.eng2State.value
+    var servoValue = viewModel.servoValue.value
+    var thrustValue = viewModel.thrustValue.value
 
-        Spacer(modifier = Modifier.height(24.dp))
 
-        Button(
-            onClick = { navController.popBackStack() }
-        ) {
-            Text("Powrót")
+    val isConnected by viewModel.isConnected
+
+    LaunchedEffect(Unit) {
+        viewModel.startPingPong(ip, commandPort)
+    }
+    LaunchedEffect(startSync) {
+        if (startSync) {
+            // Wywołaj synchronizację
+            val state = viewModel.synchronizeState(ip, commandPort)
+            if (state != null) {
+                eng1State = state["ENG1"] == "ON"
+                eng2State = state["ENG2"] == "ON"
+                thrustValue = state["ENG2_VAL"]?.toIntOrNull() ?: 0
+                servoValue = state["SERVO"]?.toIntOrNull() ?: 90
+                streaming = state["STREAM"] == "ON"
+
+                viewModel.isConnected.value = true
+                Log.e("SYNCH", "Elo")
+            } else {
+                Log.e("SYNCH", "Gówno")
+                viewModel.isConnected.value = false
+            }
+            // Resetuj startSync, żeby można było wywołać ponownie po kliknięciu
+            startSync = false
         }
     }
-}
 
+    Box(modifier = Modifier.fillMaxSize()) {
+
+        // Ikona X w prawym górnym rogu
+        IconButton(
+            onClick = {
+                Log.d(
+                    "SettingsScreen",
+                    "Powrót kliknięty, isConnected = ${viewModel.isConnected.value}"
+                )
+                navController.popBackStack()
+            },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Zamknij",
+                tint = Color.Black
+            )
+        }
+
+        // Reszta zawartości
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 64.dp), // Aby nie zasłonić X-a
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Button(
+                onClick = { startSync = true },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isConnected) Color.Green else Color.Red
+                )
+            ) {
+                Text("Połącz")
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+
+}
