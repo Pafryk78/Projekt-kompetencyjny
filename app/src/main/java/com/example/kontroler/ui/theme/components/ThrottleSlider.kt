@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -29,10 +30,12 @@ fun ThrottleSlider(
     modifier: Modifier = Modifier,
     minValue: Int = 0,
     maxValue: Int = 180,
+    maxLimit: Int = maxValue,
     initialValue: Int = 90,
-    onValueChange: (Int) -> Unit
+    onValueChange: (Int) -> Unit,
+    enabled: Boolean = true
 ) {
-    var position by remember { mutableStateOf(initialValue.coerceIn(minValue, maxValue)) }
+    var position by remember { mutableStateOf(initialValue.coerceIn(minValue, maxLimit)) }
     val animatedPosition by animateFloatAsState(
         targetValue = position.toFloat(),
         label = "ThrottleAnimation"
@@ -46,14 +49,17 @@ fun ThrottleSlider(
             .draggable(
                 orientation = Orientation.Vertical,
                 state = rememberDraggableState { delta ->
+                    if (!enabled) return@rememberDraggableState
                     val newPosition = (position - (delta / 5f).roundToInt())
-                        .coerceIn(minValue, maxValue)
+                        .coerceIn(minValue, maxLimit) // ⛔ ograniczenie dynamiczne
                     if (newPosition != position) {
                         position = newPosition
                         onValueChange(newPosition)
                     }
-                }
+                },
+                enabled = enabled
             )
+            .alpha(if (enabled) 1f else 0.5f)
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val trackWidth = size.width / 4
@@ -62,6 +68,7 @@ fun ThrottleSlider(
             val knobWidth = trackWidth * 2
             val knobY = (1 - (animatedPosition / maxValue)) * (trackHeight - knobHeight)
 
+            // Tło ścieżki
             drawRoundRect(
                 color = Color.DarkGray,
                 size = Size(trackWidth, trackHeight),
@@ -69,12 +76,14 @@ fun ThrottleSlider(
                 cornerRadius = CornerRadius(10f, 10f)
             )
 
+            // Wypełnienie zależne od pozycji
             drawRoundRect(
                 color = Color.Red,
                 size = Size(trackWidth, trackHeight * (animatedPosition / maxValue)),
                 topLeft = Offset((size.width - trackWidth) / 2, trackHeight * (1 - (animatedPosition / maxValue)))
             )
 
+            // Pokrętło
             drawRoundRect(
                 color = Color.White,
                 size = Size(knobWidth, knobHeight),

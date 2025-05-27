@@ -1,35 +1,44 @@
 package com.example.kontroler.ui.theme
 
-import android.annotation.SuppressLint
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.net.Uri
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,32 +49,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.kontroler.ConnectionViewModel
+import com.example.kontroler.R
+import com.example.kontroler.ui.theme.components.Autorzy
 import com.example.kontroler.ui.theme.components.CustomSwitch
 import com.example.kontroler.ui.theme.components.ThrottleSlider
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ObsoleteCoroutinesApi
 import kotlinx.coroutines.channels.ticker
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import java.io.BufferedReader
-import java.io.EOFException
-import java.io.InputStream
-import java.io.InputStreamReader
-import java.io.PrintWriter
-import java.net.Socket
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 @Composable
 fun MainApp() {
@@ -87,11 +89,15 @@ fun MainApp() {
                 commandPort = 80,
                 navController = navController)
         }
+
+        composable("sekretnyWidok") {
+            SekretnyWidok(navController)
+        }
     }
 }
 
-@SuppressLint("UnrememberedGetBackStackEntry")
-@OptIn(ObsoleteCoroutinesApi::class)
+
+
 @Composable
 fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navController: NavController) {
 
@@ -108,6 +114,13 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
     var thrustValue = viewModel.thrustValue.value
     var isConnected = viewModel.isConnected.value
 
+
+//    DisposableEffect(Unit) {
+//        viewModel.startSensorListening()
+//        onDispose {
+//            viewModel.stopSensorListening()
+//        }
+//    }
 
 
     LaunchedEffect(streaming) {
@@ -140,7 +153,11 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
             )
     }
 
-
+    LaunchedEffect(viewModel.ograniczenie.value) {
+        if (viewModel.ograniczenie.value && viewModel.thrustValue.value > 50) {
+            viewModel.thrustValue.value = 50
+        }
+    }
 
     LaunchedEffect(Unit) {
 
@@ -148,55 +165,92 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
 
 
         // serwo
+
+
         launch {
-            val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
+            val ticker = ticker(delayMillis = 20, initialDelayMillis = 0)
             var lastServo = viewModel.servoValue.value
-            var currentServo = viewModel.servoValue.value
 
             for (event in ticker) {
-                val targetServo = viewModel.servoValue.value
+                val currentServo = viewModel.getServoControlValue()
 
-                if (currentServo != targetServo) {
-                    currentServo += when {
-                        currentServo < targetServo -> 1
-                        currentServo > targetServo -> -1
-                        else -> 0
-                    }
-
-                    if (currentServo != lastServo) {
-                        viewModel.sendCommandToEsp32(ip, commandPort, "SERVO_SET:$currentServo", isConnected)
-                        lastServo = currentServo
-                    }
+                if (currentServo != lastServo) {
+                    viewModel.sendCommandToEsp32(ip, commandPort, "SERVO_SET:$currentServo", isConnected)
+                    lastServo = currentServo
                 }
             }
         }
 
+//        launch {
+//            val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
+//            var lastServo = viewModel.servoValue.value
+//            var currentServo = viewModel.servoValue.value
+//
+//            for (event in ticker) {
+//                val targetServo = viewModel.getServoControlValue()
+//
+//                if (currentServo != targetServo) {
+//                    currentServo += when {
+//                        currentServo < targetServo -> 1
+//                        currentServo > targetServo -> -1
+//                        else -> 0
+//                    }
+//
+//                    if (currentServo != lastServo) {
+//                        viewModel.sendCommandToEsp32(ip, commandPort, "SERVO_SET:$currentServo", isConnected)
+//                        lastServo = currentServo
+//                    }
+//                }
+//            }
+//        }
+
+
         launch {
-            val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
+            val ticker = ticker(delayMillis = 20, initialDelayMillis = 0)
             var lastThrust = viewModel.thrustValue.value
-            var currentThrust = viewModel.thrustValue.value
 
             for (event in ticker) {
-                val targetThrust = viewModel.thrustValue.value
+                val currentThrust = viewModel.thrustValue.value
                 val eng2 = viewModel.eng2State.value
 
-                if (eng2) {
-                    if (currentThrust != targetThrust) {
-                        currentThrust += when {
-                            currentThrust < targetThrust -> 1
-                            currentThrust > targetThrust -> -1
-                            else -> 0
-                        }
-
-                        if (currentThrust != lastThrust) {
-                            viewModel.sendCommandToEsp32(ip, commandPort, "ENG2_SET:$currentThrust", isConnected)
-                            lastThrust = currentThrust
-                        }
-                    }
+                if (eng2 && currentThrust != lastThrust) {
+                    viewModel.sendCommandToEsp32(ip, commandPort, "ENG2_SET:$currentThrust", isConnected)
+                    lastThrust = currentThrust
                 }
-                // Jeśli ENG2 jest wyłączony – nic nie robimy
             }
         }
+
+
+
+
+
+
+//        launch {
+//            val ticker = ticker(delayMillis = 10, initialDelayMillis = 0)
+//            var lastThrust = viewModel.thrustValue.value
+//            var currentThrust = viewModel.thrustValue.value
+//
+//            for (event in ticker) {
+//                val targetThrust = viewModel.thrustValue.value
+//                val eng2 = viewModel.eng2State.value
+//
+//                if (eng2) {
+//                    if (currentThrust != targetThrust) {
+//                        currentThrust += when {
+//                            currentThrust < targetThrust -> 1
+//                            currentThrust > targetThrust -> -1
+//                            else -> 0
+//                        }
+//
+//                        if (currentThrust != lastThrust) {
+//                            viewModel.sendCommandToEsp32(ip, commandPort, "ENG2_SET:$currentThrust", isConnected)
+//                            lastThrust = currentThrust
+//                        }
+//                    }
+//                }
+//
+//            }
+//        }
 
 
     }
@@ -210,7 +264,10 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
                 contentDescription = "Podgląd ESP32",
                 modifier = Modifier
                     .fillMaxSize()
-                    .clip(RoundedCornerShape(0.dp)) // pełny ekran, bez zaokrągleń
+                    .graphicsLayer {
+                        rotationZ = 180f
+                    }
+                    .clip(RoundedCornerShape(0.dp))
             )
         } else if (streaming) {
             Box(
@@ -226,29 +283,58 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
         // Overlay: wskaźnik połączenia (góra lewa)
         Box(
             modifier = Modifier
-                .padding(12.dp)
-                .size(16.dp)
-                .align(Alignment.TopStart)
-                .background(if (isConnected) Color.Green else Color.Red, shape = RoundedCornerShape(50))
-        )
-
-        // ** NOWY PRZYCISK USTAWIEŃ (góra prawa) **
-        IconButton(
-            onClick = { navController.navigate("settings") },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp)
-                .size(36.dp)
+                .fillMaxSize()
         ) {
-            Icon(
-                imageVector = Icons.Default.Settings,
-                contentDescription = "Ustawienia",
-                tint = Color.Black
-            )
+            // Ikona Wi-Fi w lewym górnym rogu
+            Box(
+                modifier = Modifier
+                    .padding(12.dp)
+                    .size(24.dp)
+                    .align(Alignment.TopStart)
+            ) {
+                Icon(
+                    imageVector = if (isConnected) Icons.Default.Wifi else Icons.Default.WifiOff,
+                    contentDescription = if (isConnected) "Connected" else "Disconnected",
+                    tint = if (isConnected) Color.Green else Color.Red,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            // Rząd ikon w prawym górnym rogu
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Przycisk robienia zdjęcia
+                val context = LocalContext.current
+                val scope = rememberCoroutineScope()
+
+                IconButton(onClick = {
+                    scope.launch {
+                        if (bitmap != null) {
+                            viewModel.saveSnapshot(context, bitmap) { uri ->
+                                viewModel.setSavedImageUri(uri)
+                            }
+                        }
+                    }
+                }) {
+                    Icon(imageVector = Icons.Default.PhotoCamera, contentDescription = "Zrób zdjęcie")
+                }
+
+                // Przycisk ustawień
+                IconButton(onClick = {
+                    navController.navigate("settings")
+                }) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Ustawienia",
+                        tint = Color.Black
+                    )
+                }
+            }
         }
-
-
-
 
         // Overlay: przyciski sterujące (dół, środek)
         Row(
@@ -260,17 +346,20 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
             CustomSwitch(
                 actionName = "ENG1",
                 isActive = eng1State,
-                onClick = { viewModel.eng1State.value = !eng1State }
+                onClick = { viewModel.eng1State.value = !eng1State },
+                enabled = isConnected
             )
             CustomSwitch(
                 actionName = "ENG2",
                 isActive = eng2State,
-                onClick = { viewModel.eng2State.value = !eng2State }
+                onClick = { viewModel.eng2State.value = !eng2State },
+                enabled = isConnected
             )
             CustomSwitch(
                 actionName = "Kamera",
                 isActive = streaming,
-                onClick = { viewModel.streaming.value = !streaming }
+                onClick = { viewModel.streaming.value = !streaming },
+                enabled = isConnected
             )
         }
 
@@ -283,12 +372,30 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
         ) {
             Text("Serwo", fontWeight = FontWeight.Bold, color = Color.White)
             ThrottleSlider(
-                minValue = 0,
-                maxValue = 180,
+                minValue = 10,
+                maxValue = 170,
                 initialValue = 90,
                 modifier = Modifier.width(100.dp),
-                onValueChange = { viewModel.servoValue.value = it }
+                onValueChange = { viewModel.servoValue.value = it },
+                enabled = isConnected
             )
+        }
+
+        if (!isConnected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xAA000000)) // Półprzezroczyste tło
+                    .zIndex(1f), // Nakłada się na inne elementy
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Brak połączenia z Poduszkowcem",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            }
         }
 
         // Overlay: suwak ciągu (prawy środek)
@@ -302,16 +409,45 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
             ThrottleSlider(
                 minValue = 0,
                 maxValue = 100,
+                maxLimit = if (viewModel.ograniczenie.value) 50 else 100,
                 initialValue = 0,
                 modifier = Modifier.width(100.dp),
-                onValueChange = { viewModel.thrustValue.value = it }
+                onValueChange = { viewModel.thrustValue.value = it },
+                enabled = isConnected
             )
         }
     }
 
 }
 
-@SuppressLint("UnrememberedGetBackStackEntry")
+
+@Composable
+fun SnapshotButton(lastFrame: Bitmap?) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var savedUri by remember { mutableStateOf<Uri?>(null) }
+    val viewModel: ConnectionViewModel = viewModel(LocalContext.current as ComponentActivity)
+
+    Column {
+        Button(onClick = {
+            scope.launch {
+                if (lastFrame != null) {
+                    viewModel.saveSnapshot(context, lastFrame) { uri ->
+                        savedUri = uri
+                    }
+                }
+            }
+        }) {
+            Text("Zrób zdjęcie")
+        }
+
+        if (savedUri != null) {
+            Text("Zapisano: ${savedUri.toString()}", fontSize = 12.sp)
+        }
+    }
+}
+
+
 @Composable
 fun SettingsScreen(
     ip: String,
@@ -329,7 +465,8 @@ fun SettingsScreen(
     var servoValue = viewModel.servoValue.value
     var thrustValue = viewModel.thrustValue.value
 
-
+    var clickCount by remember { mutableStateOf(0) }
+    var lastClickTime by remember { mutableStateOf(0L) }
     val isConnected by viewModel.isConnected
 
     LaunchedEffect(Unit) {
@@ -340,16 +477,14 @@ fun SettingsScreen(
             // Wywołaj synchronizację
             val state = viewModel.synchronizeState(ip, commandPort)
             if (state != null) {
-                eng1State = state["ENG1"] == "ON"
-                eng2State = state["ENG2"] == "ON"
-                thrustValue = state["ENG2_VAL"]?.toIntOrNull() ?: 0
-                servoValue = state["SERVO"]?.toIntOrNull() ?: 90
-                streaming = state["STREAM"] == "ON"
+                viewModel.eng1State.value = state["ENG1"] == "ON"
+                viewModel.eng2State.value = state["ENG2"] == "ON"
+                viewModel.thrustValue.value = state["ENG2_VAL"]?.toIntOrNull() ?: 0
+                viewModel.servoValue.value = state["SERVO"]?.toIntOrNull() ?: 90
+                viewModel.streaming.value = state["STREAM"] == "ON"
 
                 viewModel.isConnected.value = true
-                Log.e("SYNCH", "Elo")
             } else {
-                Log.e("SYNCH", "Gówno")
                 viewModel.isConnected.value = false
             }
             // Resetuj startSync, żeby można było wywołać ponownie po kliknięciu
@@ -379,11 +514,12 @@ fun SettingsScreen(
             )
         }
 
+      
         // Reszta zawartości
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = 64.dp), // Aby nie zasłonić X-a
+                .padding(top = 64.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Button(
@@ -396,7 +532,93 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+
+            // Checkbox z trybem nauki
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Checkbox(
+                    checked = viewModel.ograniczenie.value,
+                    onCheckedChange = {
+                        viewModel.ograniczenie.value = it
+                    }
+                )
+
+                Text(
+                    text = "Ograniczenie",
+                    color = Color.Black, // Żaden niebieski, żadna podpowiedź
+                    modifier = Modifier.clickable {
+                        val currentTime = System.currentTimeMillis()
+
+                        if (currentTime - lastClickTime > 2000) {
+                            clickCount = 0
+                        }
+
+                        clickCount++
+                        lastClickTime = currentTime
+
+                        if (clickCount >= 5) {
+                            clickCount = 0
+                            navController.navigate("sekretnyWidok")
+                        }
+                    }
+                )
+            }
+            }
         }
     }
 
+@Composable
+fun SekretnyWidok(navController: NavController) {
+
+    val twórcy = listOf(
+        Autorzy(1, "Tomasz Szulc", "Leadr Konstruktorów", R.drawable.tomasz_szulc),
+        Autorzy(2, "dr inż. Tomasz Sobieraj", "Mistrz", R.drawable.tomasz_sobieraj),
+        Autorzy(3, "Patryk Sołomachin", "Mózg", R.drawable.patryk_solomachin),
+        Autorzy(4,"Ita Anioł","Królowa", R.drawable.ita_aniol),
+        Autorzy(5,"Michał Karpiak","Konstruktor", R.drawable.michal_karpiak)
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Twórcy poduszkowca", style = MaterialTheme.typography.headlineMedium)
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(24.dp)  // odstępy poziome
+        ) {
+            items(
+                items = twórcy,
+                key = { it.id }
+            ) { member ->
+                TeamMemberItem(member)
+            }
+        }
+    }
 }
+
+@Composable
+fun TeamMemberItem(member: Autorzy) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Image(
+            painter = painterResource(id = member.photoResId),
+            contentDescription = "Zdjęcie członka zespołu",
+            modifier = Modifier
+                .size(150.dp)
+                .clip(CircleShape)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(member.name, style = MaterialTheme.typography.headlineSmall)
+        Text(member.role, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+

@@ -20,7 +20,8 @@ fun CustomSwitch(
     actionName: String,
     isActive: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -49,7 +50,10 @@ fun CustomSwitch(
                         if (isActive) Color.Red else Color.DarkGray,
                         shape = RoundedCornerShape(6.dp)
                     )
-                    .clickable { onClick() }  // Wywołanie funkcji onClick
+                    .clickable(
+                        enabled = enabled,
+                        onClick = onClick
+                    )
                     .border(2.dp, Color.White, shape = RoundedCornerShape(6.dp)),
                 contentAlignment = Alignment.Center
             ) {
