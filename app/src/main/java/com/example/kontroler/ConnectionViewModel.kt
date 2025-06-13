@@ -10,25 +10,36 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.view.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.ticker
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
 import java.io.EOFException
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.PrintWriter
@@ -324,4 +335,130 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             onImageSaved(null)
         }
     }
+
+
+
+    private var videoEncoder: VideoEncoder? = null
+    private var frameJob: Job? = null
+
+    private val _isRecording = MutableStateFlow(false)
+    val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
+
+    fun startRecording(context: Context, incomingFrames: Flow<Bitmap>) {
+        val outputFile = File(context.getExternalFilesDir(null), "video_${System.currentTimeMillis()}.mp4")
+        videoEncoder = VideoEncoder(640, 480, 20, outputFile).apply { start() }
+
+        frameJob = viewModelScope.launch(Dispatchers.IO) {
+            incomingFrames.collect { bitmap ->
+                videoEncoder?.encodeFrame(bitmap)
+            }
+        }
+
+        _isRecording.value = true
+    }
+
+    fun stopRecording() {
+        frameJob?.cancel()
+        videoEncoder?.stop()
+        videoEncoder = null
+        _isRecording.value = false
+    }
+
+    fun bitmapToFlow(currentBitmap: () -> Bitmap): Flow<Bitmap> = flow {
+        while (true) {
+            emit(currentBitmap())
+            delay(50L)
+        }
+    }
+
 }
+
+class VideoEncoder(
+    private val width: Int,
+    private val height: Int,
+    private val fps: Int,
+    private val outputFile: File
+) {
+    private lateinit var codec: MediaCodec
+    private lateinit var inputSurface: Surface
+    private lateinit var muxer: MediaMuxer
+    private lateinit var eglRenderer: EglRenderer
+
+    private val bufferInfo = MediaCodec.BufferInfo()
+    private var trackIndex = -1
+    private var muxerStarted = false
+
+    fun start() {
+        val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            setInteger(MediaFormat.KEY_BIT_RATE, 5_000_000)
+            setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+        }
+
+        codec = MediaCodec.createEncoderByType("video/avc")
+        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        inputSurface = codec.createInputSurface()
+        codec.start()
+
+        muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+
+        eglRenderer = EglRenderer()
+        eglRenderer.init(inputSurface, width, height)
+    }
+
+    fun encodeFrame(bitmap: Bitmap) {
+        eglRenderer.drawFrame(bitmap)
+        drainEncoder()
+    }
+
+    fun stop() {
+        codec.signalEndOfInputStream()
+        drainEncoder(final = true)
+
+        codec.stop()
+        codec.release()
+        eglRenderer.release()
+
+        if (muxerStarted) {
+            muxer.stop()
+            muxer.release()
+        }
+    }
+
+    private fun drainEncoder(final: Boolean = false) {
+        while (true) {
+            val outputBufferId = codec.dequeueOutputBuffer(bufferInfo, 10000)
+            when {
+                outputBufferId == MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                    if (!final) break
+                }
+
+                outputBufferId == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    if (muxerStarted) throw RuntimeException("Format changed twice")
+                    val newFormat = codec.outputFormat
+                    trackIndex = muxer.addTrack(newFormat)
+                    muxer.start()
+                    muxerStarted = true
+                }
+
+                outputBufferId >= 0 -> {
+                    if (!muxerStarted) throw RuntimeException("Muxer hasn't started")
+
+                    val encodedData = codec.getOutputBuffer(outputBufferId) ?: continue
+                    if (bufferInfo.size > 0) {
+                        encodedData.position(bufferInfo.offset)
+                        encodedData.limit(bufferInfo.offset + bufferInfo.size)
+                        muxer.writeSampleData(trackIndex, encodedData, bufferInfo)
+                    }
+                    codec.releaseOutputBuffer(outputBufferId, false)
+
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        break
+                    }
+                }
+            }
+        }
+    }
+}
+

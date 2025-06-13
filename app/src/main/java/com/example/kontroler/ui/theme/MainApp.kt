@@ -1,7 +1,7 @@
 package com.example.kontroler.ui.theme
 
+
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.net.Uri
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -25,8 +25,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
@@ -39,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,7 +106,7 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
 
     val viewModel: ConnectionViewModel = viewModel(LocalContext.current as ComponentActivity)
 
-
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var streaming = viewModel.streaming.value
@@ -113,6 +116,11 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
     var servoValue = viewModel.servoValue.value
     var thrustValue = viewModel.thrustValue.value
     var isConnected = viewModel.isConnected.value
+
+
+
+
+    val isRecording by viewModel.isRecording.collectAsState()
 
 
 //    DisposableEffect(Unit) {
@@ -307,10 +315,26 @@ fun Esp32StreamViewer(ip: String, commandPort: Int, streamPort: Int, navControll
                     .padding(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Przycisk robienia zdjęcia
-                val context = LocalContext.current
-                val scope = rememberCoroutineScope()
 
+                val isRecording by viewModel.isRecording.collectAsState()
+                val bitmapProvider = { bitmap ?: Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888) }
+
+                IconButton(onClick = {
+                    if (isRecording) {
+                        viewModel.stopRecording()
+                    } else {
+                        val flow = viewModel.bitmapToFlow { bitmapProvider() }
+                        viewModel.startRecording(context, flow)
+                    }
+                }) {
+                    Icon(
+                        imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
+                        contentDescription = if (isRecording) "Zatrzymaj nagrywanie" else "Rozpocznij nagrywanie",
+                        tint = if (isRecording) Color.Red else Color.Black
+                    )
+                }
+
+                // Przycisk robienia zdjęcia
                 IconButton(onClick = {
                     scope.launch {
                         if (bitmap != null) {
@@ -573,11 +597,12 @@ fun SettingsScreen(
 fun SekretnyWidok(navController: NavController) {
 
     val twórcy = listOf(
-        Autorzy(1, "Tomasz Szulc", "Leadr Konstruktorów", R.drawable.tomasz_szulc),
-        Autorzy(2, "dr inż. Tomasz Sobieraj", "Mistrz", R.drawable.tomasz_sobieraj),
-        Autorzy(3, "Patryk Sołomachin", "Mózg", R.drawable.patryk_solomachin),
-        Autorzy(4,"Ita Anioł","Królowa", R.drawable.ita_aniol),
-        Autorzy(5,"Michał Karpiak","Konstruktor", R.drawable.michal_karpiak)
+        Autorzy(1, "dr inż. Tomasz Sobieraj", "Promotor", R.drawable.tomasz_sobieraj),
+        Autorzy(2, "Tomasz Szulc", "Lider konstruktorów", R.drawable.tomasz_szulc),
+        Autorzy(3, "Patryk Sołomachin", "Lider programistów", R.drawable.patryk_solomachin),
+        Autorzy(4,"Damian Rosiak","Lider elektroników", R.drawable.damian_rosiak),
+        Autorzy(5,"Ita Anioł","Elektroniczka", R.drawable.ita_aniol),
+        Autorzy(6,"Michał Karpiak","Konstruktor", R.drawable.michal_karpiak)
     )
 
     Column(
